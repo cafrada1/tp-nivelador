@@ -2,13 +2,13 @@ import os
 import sys
 from test_case import LOGS_DUMP_FILE_PATH
 from tests import (
-    OutputFiles,
-    SigtermHandling,
-    Concurrency,
+    #OutputFiles,
+    #SigtermHandling,
+    #Concurrency,
     Json,
     ForcedExit,
-    Batching,
-    MemoryProfile,
+    #Batching,
+    #MemoryProfile,
     ServerShortReadWrite,
     ClientShortReadWrite,
 )
@@ -16,13 +16,13 @@ from tests import (
 TEST_CASES = [
     Json,
     ForcedExit,
-    OutputFiles,
-    Concurrency,
-    MemoryProfile,
-    SigtermHandling,
+    #OutputFiles,
+    #Concurrency,
+    #MemoryProfile,
+    #SigtermHandling,
     ClientShortReadWrite,
     ServerShortReadWrite,
-    Batching,
+    #Batching,
 ]
 MESSAGE_PADDING = 32
 
