@@ -9,38 +9,57 @@ import (
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
-type Decoder interface {
-	ReceiveWinners() (domain.Bets, error)
-}
-
 type decoder struct {
 	sock io.Reader
 }
 
-func NewDecoder(sock io.Reader) *decoder {
+func newDecoder(sock io.Reader) *decoder {
 	return &decoder{sock}
 }
 
-func (d *decoder) ReceiveWinners() (domain.Bets, error) {
-	payloadLength, err := d.readPayloadLength()
+// receive reads one full frame and returns its type, id and data.
+func (d *decoder) receive() (byte, int, []byte, error) {
+	header, err := safe_socket.RecvAll(d.sock, payloadLengthSize+messageIDSize)
 	if err != nil {
-		return nil, err
-	}
-	data, err := safe_socket.RecvAll(d.sock, payloadLength)
-	if err != nil {
-		return nil, err
+		return 0, 0, nil, err
 	}
 
-	return decodeWinners(data)
+	payloadLength := int(binary.BigEndian.Uint32(header[:payloadLengthSize]))
+	messageID := int(binary.BigEndian.Uint32(header[payloadLengthSize : payloadLengthSize+messageIDSize]))
+
+	payload, err := safe_socket.RecvAll(d.sock, payloadLength-messageIDSize)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+
+	return payload[0], messageID, payload[1:], nil
 }
 
-func (d *decoder) readPayloadLength() (int, error) {
-	payloadLength, err := safe_socket.RecvAll(d.sock, payloadLengthSize)
+func (d *decoder) receiveAck() (int, error) {
+	messageType, messageID, _, err := d.receive()
 	if err != nil {
 		return 0, err
 	}
+	if messageType != messageAck {
+		return 0, fmt.Errorf("expected ACK message, got type %d", messageType)
+	}
+	return messageID, nil
+}
 
-	return int(binary.BigEndian.Uint32(payloadLength)), nil
+func (d *decoder) receiveWinners() (int, domain.Bets, error) {
+	messageType, messageID, data, err := d.receive()
+	if err != nil {
+		return 0, nil, err
+	}
+	if messageType != messageWinners {
+		return 0, nil, fmt.Errorf("expected WINNERS message, got type %d", messageType)
+	}
+
+	winners, err := decodeWinners(data)
+	if err != nil {
+		return 0, nil, err
+	}
+	return messageID, winners, nil
 }
 
 func decodeWinners(data []byte) (domain.Bets, error) {

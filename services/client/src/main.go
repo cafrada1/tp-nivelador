@@ -10,9 +10,14 @@ import (
 )
 
 func loadConfig() (client.ClientConfig, error) {
-	agencyId := os.Getenv("AGENCY_ID")
-	if agencyId == "" {
+	agencyStr := os.Getenv("AGENCY_ID")
+	if agencyStr == "" {
 		return client.ClientConfig{}, errors.New("AGENCY_ID environment variable is required")
+	}
+
+	agencyId, err := strconv.Atoi(agencyStr)
+	if err != nil {
+		return client.ClientConfig{}, errors.New("AGENCY_ID environment variable must be a number")
 	}
 
 	inputFile := os.Getenv("INPUT_FILE")

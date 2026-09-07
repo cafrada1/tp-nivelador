@@ -1,49 +1,12 @@
-from abc import ABC
-from enum import Enum
 from socket import socket
 
 from protocol import common
+from protocol.messages import Message, OpenMessage, DataMessage, CloseMessage, AckMessage, MessageType
 from safe_socket import safe_socket
 from lottery import Bet
 
 class MalformedMessageError(Exception):
     pass
-
-
-class MessageType(Enum):
-    OPEN = 0x00
-    DATA = 0x01
-    CLOSE = 0x02
-
-class Message(ABC):
-    def __init__(self, message_type: MessageType):
-        self.type: MessageType = message_type
-
-    def agency_id(self) -> int:
-        raise NotImplementedError("This message type does not have an agency_id")
-
-    def bets(self) -> list[Bet]:
-        raise NotImplementedError("This message type does not have bets")
-
-class OpenMessage(Message):
-    def __init__(self, agency_id: int):
-        super().__init__(MessageType.OPEN)
-        self._agency_id: int = agency_id
-
-    def agency_id(self) -> int:
-        return self._agency_id
-
-class DataMessage(Message):
-    def __init__(self, bets: list[Bet]):
-        super().__init__(MessageType.DATA)
-        self._bets: list[Bet] = bets
-
-    def bets(self) -> list[Bet]:
-        return self._bets
-
-class CloseMessage(Message):
-    def __init__(self):
-        super().__init__(MessageType.CLOSE)
 
 
 class Decoder:
@@ -61,31 +24,34 @@ class Decoder:
     def agency_id(self, value: int) -> None:
         self._agency_id = value
 
-    def recv_message(self) -> Message:
-        message, data = self._recv_payload()
+    def recv_message(self) -> tuple[int, Message]:
+        message_id, message, data = self._recv_payload()
 
         match message:
             case MessageType.OPEN.value:
                 self._agency_id = _decode_agency_id(data)
-                return OpenMessage(self.agency_id)
+                return message_id, OpenMessage(self.agency_id)
             case MessageType.DATA.value:
-                return DataMessage(_decode_bets(self.agency_id, data))
+                return message_id, DataMessage(_decode_bets(self.agency_id, data))
             case MessageType.CLOSE.value:
-                return CloseMessage()
+                return message_id, CloseMessage()
+            case MessageType.ACK.value:
+                return message_id, AckMessage()
             case _:
                 raise MalformedMessageError
 
-    def _recv_payload(self) -> tuple[int, bytes]:
+    def _recv_payload(self) -> tuple[int, int, bytes]:
         payload_size: bytes = safe_socket.recv_all(self._sock, common.PAYLOAD_LENGTH_SIZE)
         payload_size_int: int = int.from_bytes(payload_size, byteorder=common.ENDIAN)
-        if payload_size_int == 0:
+        if payload_size_int < common.MESSAGE_TYPE_SIZE + common.MESSAGE_ID_SIZE:
             raise MalformedMessageError
 
         payload: bytes = safe_socket.recv_all(self._sock, payload_size_int)
 
-        message: int = payload[0]
-        data: bytes = payload[1:]
-        return message, data
+        message_id: int = int.from_bytes(payload[:common.MESSAGE_ID_SIZE], byteorder=common.ENDIAN)
+        message: int = payload[common.MESSAGE_ID_SIZE]
+        data: bytes = payload[common.MESSAGE_ID_SIZE + common.MESSAGE_TYPE_SIZE:]
+        return message_id, message, data
 
 def _decode_agency_id(data: bytes) -> int:
     agency_id: int = int.from_bytes(data[:common.AGENCY_ID_SIZE], byteorder=common.ENDIAN)

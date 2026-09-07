@@ -27,5 +27,9 @@ def info(action: str, result: LogResult, *args):
     logging.info(f"action={action} result={result} {_parse_args(args)}")
 
 
+def warn(action: str, result: LogResult, *args):
+    logging.warning(f"action={action} result={result} {_parse_args(args)}")
+
+
 def error(action: str, result: LogResult, *args):
     logging.error(f"action={action} result={result} {_parse_args(args)}")

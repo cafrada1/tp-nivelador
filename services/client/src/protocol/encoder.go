@@ -10,70 +10,65 @@ import (
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
 )
 
-type Encoder interface {
-	SendBets(bets domain.Bets) error
-	SendOpen(agencyId int) error
-	SendClose() error
-}
-
 type encoder struct {
 	sock io.Writer
 }
 
-func NewEncoder(sock io.Writer) *encoder {
+func newEncoder(sock io.Writer) *encoder {
 	return &encoder{sock}
 }
 
-func (e *encoder) send(data bytes.Buffer) error {
-	payloadContentSize := payloadSize(data)
-
+func (e *encoder) send(messageID int, messageType byte, data *bytes.Buffer) error {
 	var payload bytes.Buffer
-	payload.Grow(payloadContentSize)
-	err := encodePayloadSize(payloadContentSize, &payload)
-	if err != nil {
+	payload.Grow(messageIDSize + messageTypeSize + data.Len())
+	if err := binary.Write(&payload, binary.BigEndian, uint32(messageID)); err != nil {
 		return err
 	}
-	_, err = payload.Write(data.Bytes())
+	if err := payload.WriteByte(messageType); err != nil {
+		return err
+	}
+	if _, err := payload.Write(data.Bytes()); err != nil {
+		return err
+	}
 
-	return safe_socket.SendAll(e.sock, payload.Bytes())
+	var frame bytes.Buffer
+	frame.Grow(payloadLengthSize + payload.Len())
+	if err := binary.Write(&frame, binary.BigEndian, uint32(payload.Len())); err != nil {
+		return err
+	}
+	if _, err := frame.Write(payload.Bytes()); err != nil {
+		return err
+	}
+
+	return safe_socket.SendAll(e.sock, frame.Bytes())
 }
 
-func (e *encoder) SendClose() error {
+func (e *encoder) sendAck(messageID int) error {
 	var data bytes.Buffer
-	_, err := data.Write([]byte{messageClose})
-	if err != nil {
-		return err
-	}
-	return e.send(data)
+	return e.send(messageID, messageAck, &data)
 }
 
-func (e *encoder) SendOpen(agencyId int) error {
+func (e *encoder) sendClose(messageID int) error {
 	var data bytes.Buffer
-	_, err := data.Write([]byte{messageOpen})
-	if err != nil {
-		return err
-	}
-	err = encodeAgencyId(agencyId, &data)
-	if err != nil {
-		return err
-	}
-	return e.send(data)
+	return e.send(messageID, messageClose, &data)
 }
 
-func (e *encoder) SendBets(bets domain.Bets) error {
+func (e *encoder) sendOpen(messageID int, agencyID int) error {
+	var data bytes.Buffer
+	if err := encodeAgencyID(agencyID, &data); err != nil {
+		return err
+	}
+	return e.send(messageID, messageOpen, &data)
+}
+
+func (e *encoder) sendBets(messageID int, bets domain.Bets) error {
 	var data bytes.Buffer
 
-	_, err := data.Write([]byte{messageData})
-	if err != nil {
+	if err := e.encodeBets(bets, &data); err != nil {
 		return err
 	}
 
-	err = e.encodeBets(bets, &data)
-	if err != nil {
-		return err
-	}
-
-	return e.send(data)
+	return e.send(messageID, messageData, &data)
 }
 
 func (e *encoder) encodeBets(bets domain.Bets, data *bytes.Buffer) error {
@@ -92,16 +87,8 @@ func (e *encoder) encodeBets(bets domain.Bets, data *bytes.Buffer) error {
 	return nil
 }
 
-func encodeAgencyId(agencyId int, data *bytes.Buffer) error {
-	return binary.Write(data, binary.BigEndian, uint32(agencyId))
-}
-
-func payloadSize(data bytes.Buffer) int {
-	return data.Len()
-}
-
-func encodePayloadSize(payloadSize int, data *bytes.Buffer) error {
-	return binary.Write(data, binary.BigEndian, uint32(payloadSize))
+func encodeAgencyID(agencyID int, data *bytes.Buffer) error {
+	return binary.Write(data, binary.BigEndian, uint32(agencyID))
 }
 
 func encodeLengthBets(length int, data *bytes.Buffer) error {

@@ -17,28 +17,56 @@ import (
 const CONNECTION_ATTEMPTS_MAX = 10
 const CONNECTION_ATTEMPS_DELAY_MS = 300
 
+const (
+	FirstNameIndex = iota
+	LastNameIndex
+	DocumentIndex
+	BirthdateIndex
+	NumberIndex
+
+	LineFields = 5
+	Separator  = ","
+)
+
 type ClientConfig struct {
 	ServerHost string
 	ServerPort string
-	AgencyId   string
+	AgencyId   int
 	InputFile  string
 	OutputFile string
 	BatchSize  int
 }
 
 type Client struct {
-	conn   net.Conn
-	config ClientConfig
+	config     ClientConfig
+	protocol   protocol.Protocol
+	inputFile  *os.File
+	outputFile *os.File
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
 	conn, err := connectToServer(config.ServerHost, config.ServerPort)
 	if err != nil {
-		logger.Warn("connect-to-server", logger.Fail)
+		logger.Warn("connect-to-server", logger.Fail, "host", config.ServerHost, "port", config.ServerPort, "err", err)
 		return nil, err
 	}
 
-	client := &Client{conn: conn, config: config}
+	inputFile, err := os.Open(config.InputFile)
+	if err != nil {
+		logger.Error("open-input-file", logger.Fail, "file", config.InputFile, "err", err)
+		conn.Close()
+		return nil, err
+	}
+
+	output, err := os.Create(config.OutputFile)
+	if err != nil {
+		logger.Error("create-output-file", logger.Fail, "file", config.OutputFile, "err", err)
+		conn.Close()
+		inputFile.Close()
+		return nil, err
+	}
+
+	client := &Client{config: config, protocol: protocol.NewProtocol(conn), inputFile: inputFile, outputFile: output}
 	return client, nil
 }
 
@@ -64,74 +92,74 @@ func connectToServer(host, port string) (net.Conn, error) {
 	return conn, err
 }
 
+func (client *Client) Close() {
+	client.protocol.Close()
+	client.inputFile.Close()
+	client.outputFile.Close()
+}
+
 func (client *Client) Run() error {
-	inputFile, err := os.Open(client.config.InputFile)
-	if err != nil {
-		logger.Error("open-input-file", logger.Fail, "file", client.config.InputFile)
-		return err
-	}
-	defer inputFile.Close()
-
-	input := bufio.NewScanner(inputFile)
-
-	output, err := os.Create(client.config.OutputFile)
-	if err != nil {
-		logger.Error("create-output-file", logger.Fail, "file", client.config.OutputFile)
-		return err
-	}
-	defer output.Close()
+	defer client.Close()
 
 	const mainAction = "test-echo-server"
-	defer client.conn.Close()
 
-	encoder := protocol.NewEncoder(client.conn)
-
-	agencyId, err := strconv.Atoi(client.config.AgencyId)
-	if err != nil {
-		logger.Error("parse-agency-id", logger.Fail, "agency-id", client.config.AgencyId)
+	logger.Info("send-open", logger.InProgress, "agency-id", client.config.AgencyId)
+	if err := client.protocol.SendOpen(client.config.AgencyId); err != nil {
+		logger.Error("send-open", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
 		return err
 	}
+	logger.Info("send-open", logger.Success, "agency-id", client.config.AgencyId)
 
-	err = encoder.SendOpen(agencyId)
-	if err != nil {
-		logger.Error("send-open", logger.Fail, "agency-id", client.config.AgencyId)
+	logger.Info(mainAction, logger.InProgress, "agency-id", client.config.AgencyId)
+	if err := client.sendBets(); err != nil {
+		logger.Error("send-bets", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
 		return err
 	}
+	logger.Info("send-bets", logger.Success, "agency-id", client.config.AgencyId)
 
-	err = client.sendBets(input, encoder)
-	if err != nil {
-		logger.Error("send-bets", logger.Fail, "agency-id", client.config.AgencyId)
+	logger.Info("send-close", logger.InProgress, "agency-id", client.config.AgencyId)
+	if err := client.protocol.SendClose(); err != nil {
+		logger.Error("send-close", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
 		return err
 	}
+	logger.Info("send-close", logger.Success, "agency-id", client.config.AgencyId)
 
-	err = encoder.SendClose()
-	if err != nil {
-		logger.Error("send-close", logger.Fail, "agency-id", client.config.AgencyId)
+	logger.Info("process-winners", logger.InProgress, "agency-id", client.config.AgencyId)
+	if err := client.processWinners(); err != nil {
+		logger.Error("process-winners", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
 		return err
 	}
+	logger.Info("process-winners", logger.Success, "agency-id", client.config.AgencyId)
 
-	decoder := protocol.NewDecoder(client.conn)
-	winners, err := decoder.ReceiveWinners()
-	if err != nil {
-		logger.Error("recv-winners", logger.Fail, "agency-id", client.config.AgencyId)
-		return err
-	}
+	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
+	return nil
+}
 
+func (client *Client) saveWinners(winners domain.Bets, agencyId int) error {
 	for _, winner := range winners {
 		winnerLine := fmt.Sprintf("%s,%s,%d,%s,%d",
 			winner.FirstName, winner.LastName, winner.Document, winner.Birthdate, winner.Number)
-		if _, err := fmt.Fprintln(output, winnerLine); err != nil {
-			logger.Error("write-winner", logger.Fail, "agency-id", agencyId, "winner", winner)
+		if _, err := fmt.Fprintln(client.outputFile, winnerLine); err != nil {
 			return err
 		}
 	}
-
-	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
-
-	return input.Err()
+	return nil
 }
 
-func (client *Client) sendBets(input *bufio.Scanner, encoder protocol.Encoder) error {
+func (client *Client) processWinners() error {
+	winners, err := client.protocol.ReceiveWinners()
+	if err != nil {
+		return err
+	}
+
+	if err = client.saveWinners(winners, client.config.AgencyId); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (client *Client) sendBets() error {
+	input := bufio.NewScanner(client.inputFile)
 	bets := make(domain.Bets, client.config.BatchSize)
 	i := 0
 	for input.Scan() {
@@ -152,35 +180,17 @@ func (client *Client) sendBets(input *bufio.Scanner, encoder protocol.Encoder) e
 			continue
 		}
 
-		err = encoder.SendBets(bets)
-		if err != nil {
+		if err = client.protocol.SendBets(bets); err != nil {
 			return err
 		}
-
 		i = 0
 	}
-
 	if i > 0 {
-		err := encoder.SendBets(bets[:i])
-		if err != nil {
-			return err
-		}
+		return client.protocol.SendBets(bets[:i])
 	}
-	return nil
+
+	return input.Err()
 }
-
-const (
-	FirstNameIndex = iota
-	LastNameIndex
-	DocumentIndex
-	BirthdateIndex
-	NumberIndex
-)
-
-const (
-	LineFields = 5
-	Separator  = ","
-)
 
 func parseLine(line string) (domain.Bet, error) {
 	values := strings.Split(line, Separator)
