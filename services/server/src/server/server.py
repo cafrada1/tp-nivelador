@@ -1,39 +1,58 @@
 import socket
+
 import logger
-import safe_socket
+from protocol import Decoder, MessageType
+from protocol.encoder import Encoder
+from lottery import Lottery, Bet
+from server.lottery_monitor import LotteryMonitor
 
 _ECHO_SERVER_MESSAGE_SIZE = 1024
 
 
 class Server:
-    def __init__(self, server_host: str, server_port: int) -> None:
+    def __init__(self, server_host: str, server_port: int, storage_path: str) -> None:
         self.server_host = server_host
         self.server_port = server_port
+        self.lottery = LotteryMonitor(Lottery(storage_path))
 
     def _handle_client(self, client_socket):
+        decoder: Decoder = Decoder(client_socket)
+        winners: list[Bet] = self._recv_bets(decoder)
+        encoder: Encoder = Encoder(client_socket)
+        encoder.send_message(winners)
+
+    def _recv_bets(self, decoder: Decoder) -> list[Bet]:
         action = "handle-client"
         message_amount = 0
         try:
             logger.info(action, logger.LogResult.in_progress)
-            while True:
-                client_message = safe_socket.recv_all(
-                    client_socket, _ECHO_SERVER_MESSAGE_SIZE
+
+            message = decoder.recv_message()
+            if message.type != MessageType.OPEN:
+                logger.error(
+                    action, logger.LogResult.fail, "bad-first-open", message.type
                 )
-                if not client_message:
-                    logger.info(
-                        action,
-                        logger.LogResult.success,
-                        "messages-amount",
-                        message_amount,
+                raise Exception("First message must be OPEN")
+
+            message = decoder.recv_message()
+            while message.type != MessageType.CLOSE:
+                if message.type != MessageType.DATA:
+                    logger.error(
+                        action, logger.LogResult.fail, "bad-bets-data", message.type
                     )
-                    return
+                    raise Exception("Expected BET message")
+
+                self.lottery.store_bets(message.bets())
+                message = decoder.recv_message()
                 message_amount += 1
-                safe_socket.send_all(client_socket, client_message)
+
         except Exception as e:
             logger.error(
                 action, logger.LogResult.fail, "messages-amount", message_amount
             )
             raise e
+
+        return self.lottery.winners(decoder.agency_id)
 
     def run(self):
         action = "accept-connection"

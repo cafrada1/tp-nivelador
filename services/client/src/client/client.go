@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/domain"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
-	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
 )
 
-const CONNECTION_ATTEMPTS_MAX = 3
-const CONNECTION_ATTEMPS_DELAY_MS = 200
-
-const ECHO_CLIENT_BUFFER_SIZE = 512
-const ECHO_CLIENT_MESSAGE_AMOUNT = 3
-const ECHO_CLIENT_MESSAGE_DELAY_MS = 1000
+const CONNECTION_ATTEMPTS_MAX = 10
+const CONNECTION_ATTEMPS_DELAY_MS = 300
 
 type ClientConfig struct {
 	ServerHost string
@@ -24,6 +23,7 @@ type ClientConfig struct {
 	AgencyId   string
 	InputFile  string
 	OutputFile string
+	BatchSize  int
 }
 
 type Client struct {
@@ -43,6 +43,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 }
 
 func connectToServer(host, port string) (net.Conn, error) {
+	time.Sleep(CONNECTION_ATTEMPS_DELAY_MS * time.Millisecond)
 	const action = "connect-to-server"
 	var err error
 	var conn net.Conn
@@ -83,42 +84,125 @@ func (client *Client) Run() error {
 	const mainAction = "test-echo-server"
 	defer client.conn.Close()
 
+	encoder := protocol.NewEncoder(client.conn)
+
+	agencyId, err := strconv.Atoi(client.config.AgencyId)
+	if err != nil {
+		logger.Error("parse-agency-id", logger.Fail, "agency-id", client.config.AgencyId)
+		return err
+	}
+
+	err = encoder.SendOpen(agencyId)
+	if err != nil {
+		logger.Error("send-open", logger.Fail, "agency-id", client.config.AgencyId)
+		return err
+	}
+
+	err = client.sendBets(input, encoder)
+	if err != nil {
+		logger.Error("send-bets", logger.Fail, "agency-id", client.config.AgencyId)
+		return err
+	}
+
+	err = encoder.SendClose()
+	if err != nil {
+		logger.Error("send-close", logger.Fail, "agency-id", client.config.AgencyId)
+		return err
+	}
+
+	decoder := protocol.NewDecoder(client.conn)
+	winners, err := decoder.ReceiveWinners()
+	if err != nil {
+		logger.Error("recv-winners", logger.Fail, "agency-id", client.config.AgencyId)
+		return err
+	}
+
+	for _, winner := range winners {
+		winnerLine := fmt.Sprintf("%s,%s,%d,%s,%d",
+			winner.FirstName, winner.LastName, winner.Document, winner.Birthdate, winner.Number)
+		if _, err := fmt.Fprintln(output, winnerLine); err != nil {
+			logger.Error("write-winner", logger.Fail, "agency-id", agencyId, "winner", winner)
+			return err
+		}
+	}
+
+	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
+
+	return input.Err()
+}
+
+func (client *Client) sendBets(input *bufio.Scanner, encoder protocol.Encoder) error {
+	bets := make(domain.Bets, client.config.BatchSize)
+	i := 0
 	for input.Scan() {
 		line := input.Text()
 		if line == "" {
 			continue
 		}
 
-		messageId := client.config.AgencyId
-		messageArgs := []any{"agency-id", client.config.AgencyId, "message-id", messageId}
-		logger.Info(mainAction, logger.InProgress, messageArgs...)
-
-		clientMessage := line
-
-		if err := safe_socket.SendAll(client.conn, []byte(clientMessage)); err != nil {
-			logger.Error("send-message", logger.Fail, messageArgs...)
-			return err
-		}
-
-		response, err := safe_socket.RecvAll(client.conn, ECHO_CLIENT_BUFFER_SIZE)
+		bet, err := parseLine(line)
 		if err != nil {
-			logger.Error("recv-response", logger.Fail, messageArgs...)
 			return err
 		}
 
-		if string(response) != clientMessage {
-			logger.Error("check-response", logger.Fail, messageArgs...)
+		bets[i] = bet
+		i++
+
+		if i < client.config.BatchSize {
+			continue
+		}
+
+		err = encoder.SendBets(bets)
+		if err != nil {
 			return err
 		}
 
-		if _, err := fmt.Fprintln(output, string(response)); err != nil {
-			logger.Error("write-response", logger.Fail, messageArgs...)
-			return err
-		}
-
-		time.Sleep(ECHO_CLIENT_MESSAGE_DELAY_MS * time.Millisecond)
+		i = 0
 	}
-	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
 
-	return input.Err()
+	if i > 0 {
+		err := encoder.SendBets(bets[:i])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const (
+	FirstNameIndex = iota
+	LastNameIndex
+	DocumentIndex
+	BirthdateIndex
+	NumberIndex
+)
+
+const (
+	LineFields = 5
+	Separator  = ","
+)
+
+func parseLine(line string) (domain.Bet, error) {
+	values := strings.Split(line, Separator)
+	if len(values) != LineFields {
+		return domain.Bet{}, fmt.Errorf("invalid bet line: %s", line)
+	}
+
+	document, err := strconv.Atoi(values[DocumentIndex])
+	if err != nil {
+		return domain.Bet{}, err
+	}
+
+	number, err := strconv.Atoi(values[NumberIndex])
+	if err != nil {
+		return domain.Bet{}, err
+	}
+
+	return domain.Bet{
+		FirstName: values[FirstNameIndex],
+		LastName:  values[LastNameIndex],
+		Document:  document,
+		Birthdate: values[BirthdateIndex],
+		Number:    number,
+	}, nil
 }
