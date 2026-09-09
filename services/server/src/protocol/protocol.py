@@ -1,11 +1,12 @@
 import socket
+import threading
 
 import logger
 from lottery import Bet
-from protocol.decoder import Decoder
+from protocol.receiver import Receiver
 from protocol.messages import Message
 from protocol import MessageType
-from protocol.encoder import Encoder
+from protocol.sender import Sender
 
 class ProtocolError(Exception):
     pass
@@ -14,10 +15,10 @@ class ProtocolError(Exception):
 class Protocol:
     def __init__(self, sock: socket.socket):
         self._sock: socket.socket = sock
-        self._encoder: Encoder = Encoder(sock)
-        self._decoder: Decoder = Decoder(sock)
+        self._sender: Sender = Sender(sock)
+        self._receiver: Receiver = Receiver(sock)
         self._next_id: int = 0
-        self._closed: bool = False
+        self._closed: threading.Event = threading.Event()
 
     def send_winners(self, winners: list[Bet]) -> None:
         message_id: int = self._send_winners(winners)
@@ -41,12 +42,12 @@ class Protocol:
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        return self._closed.is_set()
 
     def close(self):
-        if self._closed:
+        if self._closed.is_set():
             return
-        self._closed = True
+        self._closed.set()
         try:
             self._sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -59,19 +60,19 @@ class Protocol:
 
     @property
     def agency_id(self) -> int:
-        return self._decoder.agency_id
+        return self._receiver.agency_id
 
     def _recv_message(self) -> tuple[int, Message]:
-        message_id, message = self._decoder.recv_message()
+        message_id, message = self._receiver.recv_message()
         return message_id, message
 
     def _send_ack(self, message_id: int) -> None:
-        self._encoder.send_ack(message_id)
+        self._sender.send_ack(message_id)
 
     def _send_winners(self, winners: list[Bet]) -> int:
         self._next_id += 1
         message_id = self._next_id
-        self._encoder.send_winners(winners, message_id)
+        self._sender.send_winners(winners, message_id)
         return message_id
 
     def _recv_ack(self, expected_id: int) -> None:

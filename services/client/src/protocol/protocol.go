@@ -8,7 +8,7 @@ import (
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
 )
 
-type Protocol interface {
+type BetProtocol interface {
 	SendOpen(agencyID int) error
 	SendBets(bets domain.Bets) error
 	SendClose() error
@@ -16,18 +16,18 @@ type Protocol interface {
 	Close() error
 }
 type protocol struct {
-	conn    net.Conn
-	encoder *encoder
-	decoder *decoder
-	nextID  int
+	conn     net.Conn
+	sender   Sender
+	receiver Receiver
+	nextID   int
 }
 
 func NewProtocol(conn net.Conn) *protocol {
 	return &protocol{
-		conn:    conn,
-		encoder: newEncoder(conn),
-		decoder: newDecoder(conn),
-		nextID:  0,
+		conn:     conn,
+		sender:   NewSender(conn),
+		receiver: NewReceiver(conn),
+		nextID:   0,
 	}
 }
 
@@ -37,11 +37,11 @@ func (p *protocol) Close() error {
 }
 
 func (p *protocol) ReceiveWinners() (domain.Bets, error) {
-	messageID, winners, err := p.receiveWinners()
+	winnersMsg, err := p.receiver.ReceiveWinners()
 	if err != nil {
 		return nil, err
 	}
-	return winners, p.SendAck(messageID)
+	return winnersMsg.Winners, p.sender.SendAck(winnersMsg.Id)
 }
 
 func (p *protocol) SendOpen(agencyID int) error {
@@ -75,7 +75,7 @@ func (p *protocol) nextMessageID() int {
 
 func (p *protocol) sendOpen(agencyID int) (int, error) {
 	messageID := p.nextMessageID()
-	if err := p.encoder.sendOpen(messageID, agencyID); err != nil {
+	if err := p.sender.SendOpen(messageID, agencyID); err != nil {
 		return 0, err
 	}
 	return messageID, nil
@@ -83,21 +83,17 @@ func (p *protocol) sendOpen(agencyID int) (int, error) {
 
 func (p *protocol) sendBets(bets domain.Bets) (int, error) {
 	messageID := p.nextMessageID()
-	return messageID, p.encoder.sendBets(messageID, bets)
+	return messageID, p.sender.SendBets(messageID, bets)
 }
 
 func (p *protocol) sendClose() (int, error) {
 	messageID := p.nextMessageID()
-	return messageID, p.encoder.sendClose(messageID)
-}
-
-func (p *protocol) SendAck(messageID int) error {
-	return p.encoder.sendAck(messageID)
+	return messageID, p.sender.SendClose(messageID)
 }
 
 func (p *protocol) receiveAck(expectedID int) error {
 	for {
-		messageID, err := p.decoder.receiveAck()
+		messageID, err := p.receiver.ReceiveAck()
 		if err != nil {
 			return err
 		}
@@ -109,12 +105,4 @@ func (p *protocol) receiveAck(expectedID int) error {
 		}
 		return fmt.Errorf("protocol error: expected ACK with id %d, got id %d", expectedID, messageID)
 	}
-}
-
-func (p *protocol) receiveWinners() (int, domain.Bets, error) {
-	messageID, winners, err := p.decoder.receiveWinners()
-	if err != nil {
-		return 0, nil, err
-	}
-	return messageID, winners, nil
 }

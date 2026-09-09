@@ -9,7 +9,7 @@ class MalformedMessageError(Exception):
     pass
 
 
-class Decoder:
+class Receiver:
     def __init__(self, sock: socket):
         self._agency_id: int | None = None
         self._sock: socket = sock

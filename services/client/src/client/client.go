@@ -1,94 +1,73 @@
 package client
 
 import (
-	"bufio"
-	"fmt"
 	"net"
-	"os"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/domain"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/repository"
 )
 
-const CONNECTION_ATTEMPTS_MAX = 10
-const CONNECTION_ATTEMPS_DELAY_MS = 300
+const ConnectionAttemptsMax = 10
+const ConnectionAttemptsDelayMs = 300
 
 const (
-	FirstNameIndex = iota
-	LastNameIndex
-	DocumentIndex
-	BirthdateIndex
-	NumberIndex
-
-	LineFields = 5
-	Separator  = ","
+	agencyIdTag = "agency-id"
+	errorTag    = "error"
 )
 
-type ClientConfig struct {
-	ServerHost string
-	ServerPort string
-	AgencyId   int
-	InputFile  string
-	OutputFile string
-	BatchSize  int
-}
-
 type Client struct {
-	config     ClientConfig
-	protocol   protocol.Protocol
-	inputFile  *os.File
-	outputFile *os.File
-	isClosed   atomic.Bool
+	config        Config
+	protocol      protocol.BetProtocol
+	betsReader    repository.BetReader
+	winnersWriter repository.WinnerWriter
+	isClosed      atomic.Bool
 }
 
-func NewClient(config ClientConfig) (*Client, error) {
+func NewClient(config Config) (*Client, error) {
 	conn, err := connectToServer(config.ServerHost, config.ServerPort)
 	if err != nil {
-		logger.Warn("connect-to-server", logger.Fail, "host", config.ServerHost, "port", config.ServerPort, "err", err)
+		logger.Warn("connect-to-server", logger.Fail, "host", config.ServerHost, "port", config.ServerPort, errorTag, err)
 		return nil, err
 	}
 
-	inputFile, err := os.Open(config.InputFile)
+	reader, err := repository.NewBetReader(config.InputFile)
 	if err != nil {
-		logger.Error("open-input-file", logger.Fail, "file", config.InputFile, "err", err)
+		logger.Error("create-bet-reader", logger.Fail, "file", config.InputFile, errorTag, err)
 		conn.Close()
 		return nil, err
 	}
 
-	output, err := os.Create(config.OutputFile)
+	writer, err := repository.NewWinnerWriter(config.OutputFile)
 	if err != nil {
-		logger.Error("create-output-file", logger.Fail, "file", config.OutputFile, "err", err)
+		logger.Error("create-winner-writer", logger.Fail, "file", config.OutputFile, errorTag, err)
 		conn.Close()
-		inputFile.Close()
+		reader.Close()
 		return nil, err
 	}
 
 	client := &Client{
-		config:     config,
-		protocol:   protocol.NewProtocol(conn),
-		inputFile:  inputFile,
-		outputFile: output,
+		config:        config,
+		protocol:      protocol.NewProtocol(conn),
+		betsReader:    reader,
+		winnersWriter: writer,
 	}
 	return client, nil
 }
 
 func connectToServer(host, port string) (net.Conn, error) {
-	time.Sleep(CONNECTION_ATTEMPS_DELAY_MS * time.Millisecond)
 	const action = "connect-to-server"
 	var err error
 	var conn net.Conn
 
 	logger.Info(action, logger.InProgress)
-	for i := range CONNECTION_ATTEMPTS_MAX {
+	for i := range ConnectionAttemptsMax {
 		conn, err = net.Dial("tcp", host+":"+port)
 		if err != nil {
 			logger.Warn(action, logger.Fail, "attempt", i)
-			time.Sleep(CONNECTION_ATTEMPS_DELAY_MS * time.Millisecond)
+			time.Sleep(ConnectionAttemptsDelayMs * time.Millisecond)
 			continue
 		}
 
@@ -104,8 +83,8 @@ func (client *Client) Close() {
 		return
 	}
 	client.protocol.Close()
-	client.inputFile.Close()
-	client.outputFile.Close()
+	client.betsReader.Close()
+	client.winnersWriter.Close()
 }
 
 func (client *Client) Run() error {
@@ -119,48 +98,55 @@ func (client *Client) Run() error {
 }
 
 func (client *Client) processBets() error {
-	const mainAction = "test-echo-server"
-
-	logger.Info("send-open", logger.InProgress, "agency-id", client.config.AgencyId)
-	if err := client.protocol.SendOpen(client.config.AgencyId); err != nil {
-		logger.Error("send-open", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
+	const (
+		clientTag         = "client-bets"
+		processWinnersTag = "process-winners"
+	)
+	logger.Info(clientTag, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	err := client.sendAllBets()
+	if err != nil {
 		return err
 	}
-	logger.Info("send-open", logger.Success, "agency-id", client.config.AgencyId)
 
-	logger.Info(mainAction, logger.InProgress, "agency-id", client.config.AgencyId)
-	if err := client.sendBets(); err != nil {
-		logger.Error("send-bets", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
+	logger.Info(processWinnersTag, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err = client.processWinners(); err != nil {
+		logger.Error(processWinnersTag, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
 		return err
 	}
-	logger.Info("send-bets", logger.Success, "agency-id", client.config.AgencyId)
+	logger.Info(processWinnersTag, logger.Success, agencyIdTag, client.config.AgencyId)
 
-	logger.Info("send-close", logger.InProgress, "agency-id", client.config.AgencyId)
-	if err := client.protocol.SendClose(); err != nil {
-		logger.Error("send-close", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
-		return err
-	}
-	logger.Info("send-close", logger.Success, "agency-id", client.config.AgencyId)
-
-	logger.Info("process-winners", logger.InProgress, "agency-id", client.config.AgencyId)
-	if err := client.processWinners(); err != nil {
-		logger.Error("process-winners", logger.Fail, "agency-id", client.config.AgencyId, "err", err)
-		return err
-	}
-	logger.Info("process-winners", logger.Success, "agency-id", client.config.AgencyId)
-
-	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
+	logger.Info(clientTag, logger.Success, agencyIdTag, client.config.AgencyId)
 	return nil
 }
 
-func (client *Client) saveWinners(winners domain.Bets, agencyId int) error {
-	for _, winner := range winners {
-		winnerLine := fmt.Sprintf("%s,%s,%d,%s,%d",
-			winner.FirstName, winner.LastName, winner.Document, winner.Birthdate, winner.Number)
-		if _, err := fmt.Fprintln(client.outputFile, winnerLine); err != nil {
-			return err
-		}
+func (client *Client) sendAllBets() error {
+	const (
+		actionSendOpen  = "send-open"
+		actionSendClose = "send-close"
+		actionSendBets  = "send-bets"
+	)
+
+	logger.Info(actionSendOpen, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err := client.protocol.SendOpen(client.config.AgencyId); err != nil {
+		logger.Error(actionSendOpen, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
 	}
+	logger.Info(actionSendOpen, logger.Success, agencyIdTag, client.config.AgencyId)
+
+	logger.Info(actionSendBets, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err := client.sendBets(); err != nil {
+		logger.Error(actionSendBets, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
+	}
+	logger.Info(actionSendBets, logger.Success, agencyIdTag, client.config.AgencyId)
+
+	logger.Info(actionSendClose, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err := client.protocol.SendClose(); err != nil {
+		logger.Error(actionSendClose, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
+	}
+	logger.Info(actionSendClose, logger.Success, agencyIdTag, client.config.AgencyId)
+
 	return nil
 }
 
@@ -170,67 +156,22 @@ func (client *Client) processWinners() error {
 		return err
 	}
 
-	if err = client.saveWinners(winners, client.config.AgencyId); err != nil {
+	if err = client.winnersWriter.WriteWinners(winners); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (client *Client) sendBets() error {
-	input := bufio.NewScanner(client.inputFile)
-	bets := make(domain.Bets, client.config.BatchSize)
-	i := 0
-	for input.Scan() {
-		line := input.Text()
-		if line == "" {
-			continue
-		}
-
-		bet, err := parseLine(line)
+	for !client.betsReader.End() {
+		bets, err := client.betsReader.ReadUntil(client.config.BatchSize)
 		if err != nil {
 			return err
-		}
-
-		bets[i] = bet
-		i++
-
-		if i < client.config.BatchSize {
-			continue
 		}
 
 		if err = client.protocol.SendBets(bets); err != nil {
 			return err
 		}
-		i = 0
 	}
-	if i > 0 {
-		return client.protocol.SendBets(bets[:i])
-	}
-
-	return input.Err()
-}
-
-func parseLine(line string) (domain.Bet, error) {
-	values := strings.Split(line, Separator)
-	if len(values) != LineFields {
-		return domain.Bet{}, fmt.Errorf("invalid bet line: %s", line)
-	}
-
-	document, err := strconv.Atoi(values[DocumentIndex])
-	if err != nil {
-		return domain.Bet{}, err
-	}
-
-	number, err := strconv.Atoi(values[NumberIndex])
-	if err != nil {
-		return domain.Bet{}, err
-	}
-
-	return domain.Bet{
-		FirstName: values[FirstNameIndex],
-		LastName:  values[LastNameIndex],
-		Document:  document,
-		Birthdate: values[BirthdateIndex],
-		Number:    number,
-	}, nil
+	return nil
 }

@@ -45,7 +45,7 @@ class Server(threading.Thread):
                     ServerClient(client_socket, self._lottery_monitor)
                 )
         except Exception as e:
-            logger.error("server-run", logger.LogResult.fail, "err", e)
+            logger.error(action, logger.LogResult.fail, "err", e)
         finally:
             self._lottery_monitor.abort()
             self._registry.close()

@@ -54,11 +54,6 @@ class ServerClient(threading.Thread):
 
         message = self._protocol.receive_data_message()
         while message.type != MessageType.CLOSE:
-            if message.type != MessageType.DATA:
-                logger.error("recv-bets", logger.LogResult.fail,
-                             "agency-id", self._protocol.agency_id, "err", "Expected DATA message")
-                raise Exception("Expected DATA message")
-
             self._lottery_monitor.store_bets(message.bets())
             batches_amount += 1
 

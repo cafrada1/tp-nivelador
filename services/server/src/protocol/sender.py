@@ -2,7 +2,7 @@ from protocol import common, MessageType
 from safe_socket import safe_socket
 from lottery import Bet
 
-class Encoder:
+class Sender:
     def __init__(self, sock):
         self._sock = sock
 
