@@ -11,11 +11,18 @@ class ServerClient(threading.Thread):
         super().__init__(daemon=True)
         self._protocol: Protocol = Protocol(client_socket)
         self._lottery_monitor: LotteryMonitor = lottery_monitor
+        self._closed: threading.Event = threading.Event()
 
-    def close(self):
+    def is_closed(self) -> bool:
+        return self._closed.is_set()
+
+    def close(self) -> None:
+        if self._closed.is_set():
+            return
+        self._closed.set()
         self._protocol.close()
 
-    def run(self):
+    def run(self) -> None:
         action = "handle-client"
         try:
             logger.info(action, logger.LogResult.in_progress)
@@ -33,10 +40,10 @@ class ServerClient(threading.Thread):
                 len(winners),
             )
         except Exception as e:
-            if not self._protocol.closed:
+            if not self.is_closed():
                 logger.error(action, logger.LogResult.fail, "err", e)
         finally:
-            self._protocol.close()
+            self.close()
 
     def _process_bets(self) -> None:
         batches_amount = 0

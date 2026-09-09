@@ -3,7 +3,7 @@ import sys
 from test_case import LOGS_DUMP_FILE_PATH
 from tests import (
     OutputFiles,
-    #SigtermHandling,
+    SigtermHandling,
     Concurrency,
     Json,
     ForcedExit,
@@ -19,7 +19,7 @@ TEST_CASES = [
     OutputFiles,
     Concurrency,
     MemoryProfile,
-    #SigtermHandling,
+    SigtermHandling,
     ClientShortReadWrite,
     ServerShortReadWrite,
     Batching,

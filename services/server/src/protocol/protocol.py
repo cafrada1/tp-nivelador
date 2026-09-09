@@ -48,6 +48,10 @@ class Protocol:
             return
         self._closed = True
         try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
             self._sock.close()
             logger.info("protocol-close", logger.LogResult.success)
         except OSError as e:

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/domain"
@@ -42,6 +43,7 @@ type Client struct {
 	protocol   protocol.Protocol
 	inputFile  *os.File
 	outputFile *os.File
+	isClosed   atomic.Bool
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
@@ -66,7 +68,12 @@ func NewClient(config ClientConfig) (*Client, error) {
 		return nil, err
 	}
 
-	client := &Client{config: config, protocol: protocol.NewProtocol(conn), inputFile: inputFile, outputFile: output}
+	client := &Client{
+		config:     config,
+		protocol:   protocol.NewProtocol(conn),
+		inputFile:  inputFile,
+		outputFile: output,
+	}
 	return client, nil
 }
 
@@ -93,6 +100,9 @@ func connectToServer(host, port string) (net.Conn, error) {
 }
 
 func (client *Client) Close() {
+	if client.isClosed.Swap(true) {
+		return
+	}
 	client.protocol.Close()
 	client.inputFile.Close()
 	client.outputFile.Close()
@@ -101,6 +111,14 @@ func (client *Client) Close() {
 func (client *Client) Run() error {
 	defer client.Close()
 
+	err := client.processBets()
+	if !client.isClosed.Load() && err != nil {
+		return err
+	}
+	return nil
+}
+
+func (client *Client) processBets() error {
 	const mainAction = "test-echo-server"
 
 	logger.Info("send-open", logger.InProgress, "agency-id", client.config.AgencyId)
