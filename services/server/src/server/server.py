@@ -1,52 +1,52 @@
 import socket
+import threading
+
 import logger
-import safe_socket
+from server.client_registry import ClientRegistry
+from server.lottery_monitor import LotteryMonitor
+from server.server_client import ServerClient
 
-_ECHO_SERVER_MESSAGE_SIZE = 1024
+class Server(threading.Thread):
+    def __init__(
+        self, server_host: str, server_port: int, monitor: LotteryMonitor
+    ) -> None:
+        super().__init__()
+        self.server_host: str = server_host
+        self.server_port: int = server_port
+        self._lottery_monitor: LotteryMonitor = monitor
+        self._registry: ClientRegistry = ClientRegistry()
+        self._shutdown: threading.Event = threading.Event()
+        self._sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
 
-
-class Server:
-    def __init__(self, server_host: str, server_port: int) -> None:
-        self.server_host = server_host
-        self.server_port = server_port
-
-    def _handle_client(self, client_socket):
-        action = "handle-client"
-        message_amount = 0
-        try:
-            logger.info(action, logger.LogResult.in_progress)
-            while True:
-                client_message = safe_socket.recv_all(
-                    client_socket, _ECHO_SERVER_MESSAGE_SIZE
-                )
-                if not client_message:
-                    logger.info(
-                        action,
-                        logger.LogResult.success,
-                        "messages-amount",
-                        message_amount,
-                    )
-                    return
-                message_amount += 1
-                safe_socket.send_all(client_socket, client_message)
-        except Exception as e:
-            logger.error(
-                action, logger.LogResult.fail, "messages-amount", message_amount
-            )
-            raise e
+    def shutdown(self) -> None:
+        if self._shutdown.is_set():
+            return
+        self._shutdown.set()
+        self._sock.shutdown(socket.SHUT_RDWR)
+        self._sock.close()
 
     def run(self):
         action = "accept-connection"
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-            server_socket.bind((self.server_host, self.server_port))
-            server_socket.listen()
-            while True:
-                try:
-                    logger.info(action, logger.LogResult.in_progress)
-                    client_socket, _ = server_socket.accept()
-                except Exception as e:
-                    logger.error(action, logger.LogResult.fail)
-                    raise e
+
+        try:
+            self._sock.bind((self.server_host, self.server_port))
+            self._sock.listen()
+            while not self._shutdown.is_set():
+                logger.info(action, logger.LogResult.in_progress)
+                client_socket, _ = self._sock.accept()
                 logger.info(action, logger.LogResult.success)
 
-                self._handle_client(client_socket)
+                if self._shutdown.is_set():
+                    client_socket.close()
+                    continue
+
+                self._registry.add(
+                    ServerClient(client_socket, self._lottery_monitor)
+                )
+        except Exception as e:
+            logger.error("server-run", logger.LogResult.fail, "err", e)
+        finally:
+            self._lottery_monitor.abort()
+            self._registry.close()
+            self._shutdown.set()
