@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/domain"
 )
@@ -23,6 +24,13 @@ const (
 	separator  = ","
 )
 
+const (
+	// Cada cuántos bytes leídos se libera la page cache del archivo.
+	dropCacheChunkBytes = 1 << 17
+	// POSIX_FADV_DONTNEED: las páginas limpias del rango se evictionan.
+	posixFadvDontNeed = 4
+)
+
 type BetReader interface {
 	ReadUntil(n int) (domain.Bets, error)
 	End() bool
@@ -33,6 +41,9 @@ type betRepository struct {
 	file   *os.File
 	reader *bufio.Scanner
 	end    bool
+
+	readBytes     int
+	dropCacheUpTo int
 }
 
 func NewBetReader(path string) (*betRepository, error) {
@@ -91,7 +102,20 @@ func (r *betRepository) End() bool {
 
 func (r *betRepository) readLine() (domain.Bet, error) {
 	line := r.reader.Bytes()
+	r.trackRead(len(line) + 1)
 	return parseLine(string(line))
+}
+
+// trackRead acumula los bytes consumidos y, cada dropCacheChunkBytes,
+// libera la page cache ya leída para que el pico de memoria del contenedor
+// no crezca con el tamaño del archivo de entrada.
+func (r *betRepository) trackRead(n int) {
+	r.readBytes += n
+	if r.readBytes < r.dropCacheUpTo {
+		return
+	}
+	r.dropCacheUpTo = r.readBytes + dropCacheChunkBytes
+	syscall.Syscall6(syscall.SYS_FADVISE64, r.file.Fd(), 0, uintptr(r.readBytes), posixFadvDontNeed, 0, 0)
 }
 
 func parseLine(line string) (domain.Bet, error) {
