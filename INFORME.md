@@ -25,6 +25,10 @@ al convertir las apuestas a bytes.
 También se cambió la forma en que se lee el archivo (siempre línea por línea), pero pasando de usar `Text()` a
 usar `Bytes()` en el `Scanner` de `bufio`. Esto también sin éxito alguno.
 
+> [!NOTE]
+>  *OBS:* Profundizando en el error del test llegue a la causa y solucion pero al no ser 100% de mi autoria dicha solucion, 
+> sera compartida por email con la catedra para evitar confusiones.
+
 ## Supuestos
 
 1. El servidor extrae el número ganador una unica vez. Solo publica los ganadores cuando un **quórum de agencias**  
