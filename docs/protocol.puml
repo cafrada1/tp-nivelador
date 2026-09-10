@@ -1,0 +1,16 @@
+@startuml
+participant Cliente as C
+participant Servidor as S
+
+C -> S: OPEN(agency_id)
+S --> C: ACK(1)
+loop hasta agotar el CSV
+  C -> S: DATA(lote de apuestas)
+  S --> C: ACK(n)
+end
+C -> S: CLOSE
+S --> C: ACK(m)
+note over S: espera al quórum de agencias\ny calcula los ganadores
+S -> C: WINNERS(ganadores de la agencia)
+C --> S: ACK
+@enduml
