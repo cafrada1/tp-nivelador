@@ -61,7 +61,9 @@ func (e *sender) SendBets(messageID int, bets domain.Bets) error {
 func (e *sender) send(messageID int, messageType byte, encodeBody func(*bytes.Buffer) error) error {
 	var frame bytes.Buffer
 	frame.Grow(payloadLengthSize + messageIDSize + messageTypeSize)
-	frame.Write([]byte{0, 0, 0, 0}) // placeholder para payloadLength
+	// Reserva 4 bytes para la longitud del payload, el valor real se
+	// completa una vez armado el frame completo.
+	frame.Write([]byte{0, 0, 0, 0})
 
 	if err := EncodeUint32(&frame, messageID); err != nil {
 		return err

@@ -92,6 +92,8 @@ func (p *protocol) sendClose() (int, error) {
 }
 
 func (p *protocol) receiveAck(expectedID int) error {
+	// Los ACKs pueden llegar desordenados o duplicados.
+	// se ignoran los de mensajes anteriores y se falla si llega uno posterior al esperado.
 	for {
 		messageID, err := p.receiver.ReceiveAck()
 		if err != nil {

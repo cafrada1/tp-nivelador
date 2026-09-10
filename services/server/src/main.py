@@ -18,6 +18,7 @@ def main():
         return 1
 
     def handle_shutdown_signal(signum: Any, frame: Any) -> None:
+        # señal de cierre: interrumpe accept() del hilo del servidor y procede a cerrarlo.
         logger.info("shutdown-signal", logger.LogResult.in_progress, "signal", signum)
         s.shutdown()
 

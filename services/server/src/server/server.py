@@ -23,6 +23,7 @@ class Server(threading.Thread):
         if self._shutdown.is_set():
             return
         self._shutdown.set()
+        # Cierra el socket de escucha para desbloquear accept().
         self._sock.shutdown(socket.SHUT_RDWR)
         self._sock.close()
 
@@ -37,6 +38,8 @@ class Server(threading.Thread):
                 client_socket, _ = self._sock.accept()
                 logger.info(action, logger.LogResult.success)
 
+                # shutdown() despierta accept() cerrando el socket.
+                # la conexion aceptada (si existiese) se descarta.
                 if self._shutdown.is_set():
                     client_socket.close()
                     continue
@@ -47,6 +50,7 @@ class Server(threading.Thread):
         except Exception as e:
             logger.error(action, logger.LogResult.fail, "err", e)
         finally:
+            # Al salir (error o shutdown) se libera a los hilos pendientes.
             self._lottery_monitor.abort()
             self._registry.close()
             self._shutdown.set()

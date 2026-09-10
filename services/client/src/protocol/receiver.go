@@ -32,6 +32,11 @@ func NewReceiver(sock io.Reader) *receiver {
 	return &receiver{sock}
 }
 
+// Espera un frame.
+//
+// Frame: [longitud del payload (4 bytes)][payload].
+//
+// Primero se lee la longitud y luego el payload completo.
 func (d *receiver) receive() (message, error) {
 	header, err := safe_socket.RecvAll(d.sock, payloadLengthSize)
 	if err != nil {
@@ -103,6 +108,9 @@ func (d *receiver) ReceiveWinners() (WinnersMessage, error) {
 	return WinnersMessage{Id: msg.id, Winners: winners}, nil
 }
 
+
+// El primer campo indica cuántos ganadores siguen. El resto se recorre
+// secuencialmente llevando un offset sobre el buffer.
 func decodeWinners(data []byte) (domain.Bets, error) {
 	length, err := DecodeUint16(data, 0)
 	if err != nil {
@@ -164,6 +172,7 @@ func decodeBetNumber(data []byte, offset int) (int, int, error) {
 }
 
 func decodeBirthdate(data []byte, offset int) (string, int, error) {
+	// La fecha viaja empaquetada como entero de la forma AAAAMMDD.
 	const formatDate = "%04d-%02d-%02d"
 	birthdate, err := DecodeUint32(data, offset)
 	if err != nil {

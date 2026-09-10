@@ -1,5 +1,4 @@
 
-
 DOCUMENT_SIZE: int = 4
 NAME_LENGTH_SIZE: int = 1
 BETS_LENGTH_SIZE: int = 2

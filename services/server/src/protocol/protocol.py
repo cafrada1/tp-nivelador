@@ -13,6 +13,9 @@ class ProtocolError(Exception):
 
 
 class Protocol:
+    """Capa de mensajeria sobre el socket: envia con id creciente y exige
+    un ACK por cada mensaje recibido, verificando que coincida el id."""
+
     def __init__(self, sock: socket.socket):
         self._sock: socket.socket = sock
         self._sender: Sender = Sender(sock)
@@ -21,6 +24,7 @@ class Protocol:
         self._closed: threading.Event = threading.Event()
 
     def send_winners(self, winners: list[Bet]) -> None:
+        # Envia los ganadores y bloquea hasta recibir el ACK correspondiente.
         message_id: int = self._send_winners(winners)
         self._recv_ack(message_id)
 
@@ -76,6 +80,8 @@ class Protocol:
         return message_id
 
     def _recv_ack(self, expected_id: int) -> None:
+        # Descarta ACKs atrasados (id menor al esperado).
+        # Un id mayor es una falla del protocolo irrecuperable en este caso.
         finish: bool = False
         while not finish:
             message_id, message = self._recv_message()

@@ -10,6 +10,12 @@ class MalformedMessageError(Exception):
 
 
 class Receiver:
+    """Deserializa los mensajes del protocolo a partir del socket.
+
+    Guarda el agency_id recibido en el OPEN: los mensajes DATA posteriores
+    no lo repiten, asi que se les asigna el de la conexion.
+    """
+
     def __init__(self, sock: socket):
         self._agency_id: int | None = None
         self._sock: socket = sock
@@ -41,6 +47,7 @@ class Receiver:
                 raise MalformedMessageError
 
     def _recv_payload(self) -> tuple[int, int, bytes]:
+        # Cada mensaje va precedido por su longitud total (id + tipo + datos).
         payload_size: bytes = safe_socket.recv_all(self._sock, common.PAYLOAD_LENGTH_SIZE)
         payload_size_int: int = int.from_bytes(payload_size, byteorder=common.ENDIAN)
         if payload_size_int < common.MESSAGE_TYPE_SIZE + common.MESSAGE_ID_SIZE:
@@ -58,6 +65,8 @@ def _decode_agency_id(data: bytes) -> int:
     return agency_id
 
 def _decode_bets(agency_id: int, data: bytes) -> list[Bet]:
+    # El primer campo indica cuantas apuestas siguen, el resto se recorre
+    # secuencialmente llevando un offset sobre el buffer.
     bets: list[Bet] = []
     size: int = int.from_bytes(data[:common.BETS_LENGTH_SIZE], byteorder=common.ENDIAN)
 
@@ -102,6 +111,7 @@ def _decode_date_of_birth(data: bytes, offset: int) -> tuple[str, int]:
 
 
 def _birth_date_from_int(date_int: int) -> str:
+    # La fecha viaja empaquetada como entero AAAAMMDD.
     year: int = date_int // 10000
     month: int = (date_int // 100) % 100
     day: int = date_int % 100

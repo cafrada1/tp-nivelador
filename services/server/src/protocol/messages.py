@@ -5,6 +5,7 @@ from lottery import Bet
 
 
 class MessageType(Enum):
+    """Tipos de mensaje del protocolo, codificados como un byte en el payload."""
     OPEN = 0x00
     DATA = 0x01
     CLOSE = 0x02

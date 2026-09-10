@@ -23,6 +23,8 @@ class ClientRegistry:
             self._clients = []
 
     def _remove_close_locked(self) -> None:
+        # Limpieza: se ejecuta al agregar un cliente para que la
+        # lista no crezca indefinidamente con hilos ya terminados.
         alive: list[ServerClient] = []
         for client in self._clients:
             if client.is_closed():

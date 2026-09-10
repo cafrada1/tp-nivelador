@@ -22,6 +22,7 @@ func run() int {
 		return 1
 	}
 	go func() {
+		// Cierra el cliente ante SIGINT/SIGTERM para liberar el socket y abortar.
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 		<-sigs

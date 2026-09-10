@@ -46,6 +46,10 @@ class ServerClient(threading.Thread):
             self.close()
 
     def _process_bets(self) -> None:
+        '''
+        Flujo del cliente: OPEN seguido de lotes DATA y un CLOSE final.
+        El monitor bloquea hasta que se complete el quorum de agencias.
+        '''
         batches_amount = 0
 
         self._protocol.receive_open_message()

@@ -54,6 +54,8 @@ func (r *betRepository) Close() error {
 
 func (r *betRepository) read() (domain.Bet, error) {
 	if !r.reader.Scan() {
+		// Al agotar el archivo marca end
+		// El EOF no se propaga como error para distinguirlo de fallos reales de lectura.
 		r.end = true
 		if err := r.reader.Err(); err != nil {
 			return domain.Bet{}, err
@@ -63,6 +65,8 @@ func (r *betRepository) read() (domain.Bet, error) {
 	return r.readLine()
 }
 
+// ReadUntil Lee hasta n apuestas.
+// Si el archivo termina antes, devuelve el lote parcial junto con end=true en lugar de un error.
 func (r *betRepository) ReadUntil(n int) (domain.Bets, error) {
 	bets := make(domain.Bets, n)
 
@@ -91,7 +95,6 @@ func (r *betRepository) readLine() (domain.Bet, error) {
 }
 
 func parseLine(line string) (domain.Bet, error) {
-
 	values := strings.Split(line, separator)
 	if len(values) != lineFields {
 		return domain.Bet{}, fmt.Errorf("invalid bet line: %s", line)

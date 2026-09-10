@@ -10,6 +10,7 @@ class Sender:
         self._send(message_id, MessageType.ACK, b"")
 
     def send_winners(self, winners: list[Bet], message_id: int) -> None:
+        # Payload: cantidad de ganadores seguida de cada apuesta serializada.
         payload: bytes = len(winners).to_bytes(common.WINNER_LENGTH_SIZE, byteorder=common.ENDIAN)
 
         for winner in winners:
@@ -18,6 +19,7 @@ class Sender:
         self._send(message_id, MessageType.WINNERS, payload)
 
     def _send(self, message_id: int, message_type: MessageType, data: bytes) -> None:
+        # Frame: [longitud del payload][id][tipo][datos]
         payload: bytes = message_id.to_bytes(common.MESSAGE_ID_SIZE, byteorder=common.ENDIAN)
         payload += message_type.value.to_bytes(common.MESSAGE_TYPE_SIZE, byteorder=common.ENDIAN)
         payload += data

@@ -41,6 +41,7 @@ func (w *winnerWriter) WriteWinners(winners domain.Bets) error {
 			return err
 		}
 		for n < len(winnerLine) {
+			// No deberia escribirse parcialmente sin un error pero por las dudas se escribe lo faltante.
 			m, err := w.file.WriteString(winnerLine[n:])
 			if err != nil {
 				return err

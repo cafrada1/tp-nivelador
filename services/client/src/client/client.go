@@ -57,6 +57,8 @@ func NewClient(config Config) (*Client, error) {
 	return client, nil
 }
 
+// Reintenta la conexion un número fijo de veces.
+// Tolera que el servidor aun no este escuchando al arrancar todos los contenedores juntos.
 func connectToServer(host, port string) (net.Conn, error) {
 	const action = "connect-to-server"
 	var err error
@@ -91,6 +93,7 @@ func (client *Client) Run() error {
 	defer client.Close()
 
 	err := client.processBets()
+	// Tras un cierre voluntario, los errores por socket cerrado se ignoran.
 	if !client.isClosed.Load() && err != nil {
 		return err
 	}
@@ -120,6 +123,8 @@ func (client *Client) processBets() error {
 }
 
 func (client *Client) sendAllBets() error {
+	// Secuencia del protocolo: OPEN, lote de apuestas DATA y CLOSE final,
+	// cada uno esperando su ACK antes de continuar.
 	const (
 		actionSendOpen  = "send-open"
 		actionSendClose = "send-close"
