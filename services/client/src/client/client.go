@@ -2,52 +2,74 @@ package client
 
 import (
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/logger"
-	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/safe_socket"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/protocol"
+	"github.com/7574-sistemas-distribuidos/tp-nivelador/src/repository"
 )
 
-const CONNECTION_ATTEMPTS_MAX = 3
-const CONNECTION_ATTEMPS_DELAY_MS = 200
+const ConnectionAttemptsMax = 10
+const ConnectionAttemptsDelayMs = 300
 
-const ECHO_CLIENT_BUFFER_SIZE = 512
-const ECHO_CLIENT_MESSAGE_AMOUNT = 3
-const ECHO_CLIENT_MESSAGE_DELAY_MS = 1000
-
-type ClientConfig struct {
-	ServerHost string
-	ServerPort string
-	AgencyId   string
-}
+const (
+	agencyIdTag = "agency-id"
+	errorTag    = "error"
+)
 
 type Client struct {
-	conn   net.Conn
-	config ClientConfig
+	config        Config
+	protocol      protocol.BetProtocol
+	betsReader    repository.BetReader
+	winnersWriter repository.WinnerWriter
+	isClosed      atomic.Bool
 }
 
-func NewClient(config ClientConfig) (*Client, error) {
+func NewClient(config Config) (*Client, error) {
 	conn, err := connectToServer(config.ServerHost, config.ServerPort)
 	if err != nil {
-		logger.Warn("connect-to-server", logger.Fail)
+		logger.Warn("connect-to-server", logger.Fail, "host", config.ServerHost, "port", config.ServerPort, errorTag, err)
 		return nil, err
 	}
 
-	client := &Client{conn: conn, config: config}
+	reader, err := repository.NewBetReader(config.InputFile)
+	if err != nil {
+		logger.Error("create-bet-reader", logger.Fail, "file", config.InputFile, errorTag, err)
+		conn.Close()
+		return nil, err
+	}
+
+	writer, err := repository.NewWinnerWriter(config.OutputFile)
+	if err != nil {
+		logger.Error("create-winner-writer", logger.Fail, "file", config.OutputFile, errorTag, err)
+		conn.Close()
+		reader.Close()
+		return nil, err
+	}
+
+	client := &Client{
+		config:        config,
+		protocol:      protocol.NewProtocol(conn),
+		betsReader:    reader,
+		winnersWriter: writer,
+	}
 	return client, nil
 }
 
+// Reintenta la conexion un número fijo de veces.
+// Tolera que el servidor aun no este escuchando al arrancar todos los contenedores juntos.
 func connectToServer(host, port string) (net.Conn, error) {
 	const action = "connect-to-server"
 	var err error
 	var conn net.Conn
 
 	logger.Info(action, logger.InProgress)
-	for i := range CONNECTION_ATTEMPTS_MAX {
+	for i := range ConnectionAttemptsMax {
 		conn, err = net.Dial("tcp", host+":"+port)
 		if err != nil {
 			logger.Warn(action, logger.Fail, "attempt", i)
-			time.Sleep(CONNECTION_ATTEMPS_DELAY_MS * time.Millisecond)
+			time.Sleep(ConnectionAttemptsDelayMs * time.Millisecond)
 			continue
 		}
 
@@ -58,35 +80,103 @@ func connectToServer(host, port string) (net.Conn, error) {
 	return conn, err
 }
 
-func (client *Client) Run() error {
-	const mainAction = "test-echo-server"
-	defer client.conn.Close()
-
-	for messageId := range ECHO_CLIENT_MESSAGE_AMOUNT {
-		messageArgs := []any{"agency-id", client.config.AgencyId, "message-id", messageId}
-		logger.Info(mainAction, logger.InProgress, messageArgs...)
-
-		clientMessage := client.config.AgencyId
-
-		if err := safe_socket.SendAll(client.conn, []byte(clientMessage)); err != nil {
-			logger.Error("send-message", logger.Fail, messageArgs...)
-			return err
-		}
-
-		responseBuffer, err := safe_socket.RecvAll(client.conn, ECHO_CLIENT_BUFFER_SIZE)
-		if err != nil {
-			logger.Error("recv-response", logger.Fail, messageArgs...)
-			return err
-		}
-
-		if string(responseBuffer) != clientMessage {
-			logger.Error("check-response", logger.Fail, messageArgs...)
-			return err
-		}
-
-		time.Sleep(ECHO_CLIENT_MESSAGE_DELAY_MS * time.Millisecond)
+func (client *Client) Close() {
+	if client.isClosed.Swap(true) {
+		return
 	}
-	logger.Info(mainAction, logger.Success, "agency-id", client.config.AgencyId)
+	client.protocol.Close()
+	client.betsReader.Close()
+	client.winnersWriter.Close()
+}
 
+func (client *Client) Run() error {
+	defer client.Close()
+
+	err := client.processBets()
+	// Tras un cierre voluntario, los errores por socket cerrado se ignoran.
+	if !client.isClosed.Load() && err != nil {
+		return err
+	}
+	return nil
+}
+
+func (client *Client) processBets() error {
+	const (
+		clientTag         = "client-bets"
+		processWinnersTag = "process-winners"
+	)
+	logger.Info(clientTag, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	err := client.sendAllBets()
+	if err != nil {
+		return err
+	}
+
+	logger.Info(processWinnersTag, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err = client.processWinners(); err != nil {
+		logger.Error(processWinnersTag, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
+	}
+	logger.Info(processWinnersTag, logger.Success, agencyIdTag, client.config.AgencyId)
+
+	logger.Info(clientTag, logger.Success, agencyIdTag, client.config.AgencyId)
+	return nil
+}
+
+func (client *Client) sendAllBets() error {
+	// Secuencia del protocolo: OPEN, lote de apuestas DATA y CLOSE final,
+	// cada uno esperando su ACK antes de continuar.
+	const (
+		actionSendOpen  = "send-open"
+		actionSendClose = "send-close"
+		actionSendBets  = "send-bets"
+	)
+
+	logger.Info(actionSendOpen, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err := client.protocol.SendOpen(client.config.AgencyId); err != nil {
+		logger.Error(actionSendOpen, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
+	}
+	logger.Info(actionSendOpen, logger.Success, agencyIdTag, client.config.AgencyId)
+
+	logger.Info(actionSendBets, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err := client.sendBets(); err != nil {
+		logger.Error(actionSendBets, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
+	}
+	logger.Info(actionSendBets, logger.Success, agencyIdTag, client.config.AgencyId)
+
+	logger.Info(actionSendClose, logger.InProgress, agencyIdTag, client.config.AgencyId)
+	if err := client.protocol.SendClose(); err != nil {
+		logger.Error(actionSendClose, logger.Fail, agencyIdTag, client.config.AgencyId, errorTag, err)
+		return err
+	}
+	logger.Info(actionSendClose, logger.Success, agencyIdTag, client.config.AgencyId)
+
+	return nil
+}
+
+func (client *Client) processWinners() error {
+	winners, err := client.protocol.ReceiveWinners()
+	if err != nil {
+		return err
+	}
+
+	if err = client.winnersWriter.WriteWinners(winners); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (client *Client) sendBets() error {
+	for !client.betsReader.End() {
+		bets, err := client.betsReader.ReadUntil(client.config.BatchSize)
+		if err != nil {
+			return err
+		}
+
+		if err = client.protocol.SendBets(bets); err != nil {
+			return err
+		}
+	}
 	return nil
 }
