@@ -6,6 +6,25 @@
 | Franco Daniel Capra | 99642  | fcapra@fi.uba.ar |
 
 
+## Comentarios y Fallas encontradas
+
+El protocolo implementado, o la lectura de los archivos, genera
+que falle el test de memoria.
+
+Se buscó solucionar eso sin éxito.
+
+Analizándolo con un LLM, el mismo atribuye el error a un tema relacionado con el kernel y con cómo
+carga el archivo a medida que se va leyendo.
+
+La implementación fue cambiando a lo largo del desarrollo, pero en ningún caso se tuvo éxito para
+hacer pasar el test.
+
+En estas iteraciones, se agregó un buffer para intentar hacer la menor cantidad de asignaciones de memoria
+al convertir las apuestas a bytes.
+
+También se cambió la forma en que se lee el archivo (siempre línea por línea), pero pasando de usar `Text()` a
+usar `Bytes()` en el `Scanner` de `bufio`. Esto también sin éxito alguno.
+
 ## Supuestos
 
 1. El servidor extrae el número ganador una unica vez. Solo publica los ganadores cuando un **quórum de agencias**  
@@ -26,6 +45,13 @@ El sistema está compuesto por **5 clientes** (Go, uno por agencia) y **1 servid
 por **TCP** usando un protocolo binario propio. 
 Cada cliente lee apuestas de un CSV linea a linea, las envía en lotes (batching), y al final recibe del servidor la lista de 
 ganadores de su agencia para escribirlos en un archivo.
+
+
+A nivel de codigo, se busco en GO implementar contra
+interfaces y no contra structs concretos.
+
+En Pyhon, se intento aplicar algo similar y por eso se utilizo la libreria `abc` para definir clases abstractas a
+modo de interfaces.
 
 ## Protocolo de comunicación
 
