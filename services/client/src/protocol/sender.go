@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -24,12 +25,11 @@ func NewSender(sock io.Writer) *sender {
 }
 
 func (e *sender) SendAck(messageID int) error {
-	return e.send(messageID, messageAck, new(bytes.Buffer))
+	return e.send(messageID, messageAck, nil)
 }
 
 func (e *sender) SendClose(messageID int) error {
-	var data bytes.Buffer
-	return e.send(messageID, messageClose, &data)
+	return e.send(messageID, messageClose, nil)
 }
 
 func (e *sender) SendOpen(messageID int, agencyID int) error {
@@ -37,7 +37,11 @@ func (e *sender) SendOpen(messageID int, agencyID int) error {
 	if err := encodeAgencyID(agencyID, &data); err != nil {
 		return err
 	}
-	return e.send(messageID, messageOpen, &data)
+
+	encodeFunc := func(data *bytes.Buffer) error {
+		return encodeAgencyID(agencyID, data)
+	}
+	return e.send(messageID, messageOpen, encodeFunc)
 }
 
 func (e *sender) SendBets(messageID int, bets domain.Bets) error {
@@ -47,36 +51,32 @@ func (e *sender) SendBets(messageID int, bets domain.Bets) error {
 		return err
 	}
 
-	return e.send(messageID, messageData, &data)
+	encodeFunc := func(data *bytes.Buffer) error {
+		return e.encodeBets(bets, data)
+	}
+
+	return e.send(messageID, messageData, encodeFunc)
 }
 
-func (e *sender) send(messageID int, messageType byte, data *bytes.Buffer) error {
-	var payload bytes.Buffer
-	payload.Grow(messageIDSize + messageTypeSize + data.Len())
-
-	if err := EncodeUint32(&payload, messageID); err != nil {
-		return err
-	}
-
-	if err := payload.WriteByte(messageType); err != nil {
-		return err
-	}
-
-	if _, err := payload.Write(data.Bytes()); err != nil {
-		return err
-	}
-
+func (e *sender) send(messageID int, messageType byte, encodeBody func(*bytes.Buffer) error) error {
 	var frame bytes.Buffer
-	frame.Grow(payloadLengthSize + payload.Len())
+	frame.Grow(payloadLengthSize + messageIDSize + messageTypeSize)
+	frame.Write([]byte{0, 0, 0, 0}) // placeholder para payloadLength
 
-	if err := EncodeUint32(&frame, payload.Len()); err != nil {
+	if err := EncodeUint32(&frame, messageID); err != nil {
 		return err
 	}
-
-	if _, err := frame.Write(payload.Bytes()); err != nil {
+	if err := frame.WriteByte(messageType); err != nil {
 		return err
 	}
+	if encodeBody != nil {
+		if err := encodeBody(&frame); err != nil {
+			return err
+		}
+	}
 
+	length := frame.Len() - payloadLengthSize
+	binary.BigEndian.PutUint32(frame.Bytes(), uint32(length))
 	return safe_socket.SendAll(e.sock, frame.Bytes())
 }
 

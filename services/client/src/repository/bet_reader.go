@@ -86,14 +86,11 @@ func (r *betRepository) End() bool {
 }
 
 func (r *betRepository) readLine() (domain.Bet, error) {
-	line := r.reader.Text()
-	return parseLine(line)
+	line := r.reader.Bytes()
+	return parseLine(string(line))
 }
 
 func parseLine(line string) (domain.Bet, error) {
-	if line == "" {
-		return domain.Bet{}, fmt.Errorf("line is empty")
-	}
 
 	values := strings.Split(line, separator)
 	if len(values) != lineFields {
