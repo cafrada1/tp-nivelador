@@ -10,7 +10,7 @@ import (
 const (
 	payloadLengthSize = 4
 	messageIDSize     = 4
-	winnersLengthSize = 4
+	winnersLengthSize = 2
 
 	messageTypeSize = 1
 )
@@ -24,7 +24,7 @@ const (
 )
 
 const (
-	betsLengthSize = 4
+	betsLengthSize = 2
 	nameLengthSize = 1
 	documentSize   = 4
 	birthdateSize  = 4

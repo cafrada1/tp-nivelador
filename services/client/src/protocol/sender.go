@@ -103,7 +103,7 @@ func encodeAgencyID(agencyID int, data *bytes.Buffer) error {
 }
 
 func encodeLengthBets(length int, data *bytes.Buffer) error {
-	if err := EncodeUint32(data, length); err != nil {
+	if err := EncodeUint16(data, length); err != nil {
 		return fmt.Errorf("cannot encoding length bets %d: %w", length, err)
 	}
 	return nil

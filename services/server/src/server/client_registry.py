@@ -14,10 +14,6 @@ class ClientRegistry:
             self._clients.append(client)
             client.start()
 
-    def remove_close(self) -> None:
-        with self._lock:
-            self._remove_close_locked()
-
     def close(self) -> None:
         with self._lock:
             for client in self._clients:

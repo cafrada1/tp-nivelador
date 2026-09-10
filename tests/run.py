@@ -8,7 +8,7 @@ from tests import (
     Json,
     ForcedExit,
     Batching,
-    #MemoryProfile,
+    MemoryProfile,
     ServerShortReadWrite,
     ClientShortReadWrite,
 )
@@ -18,7 +18,7 @@ TEST_CASES = [
     ForcedExit,
     OutputFiles,
     Concurrency,
-    #MemoryProfile,
+    MemoryProfile,
     SigtermHandling,
     ClientShortReadWrite,
     ServerShortReadWrite,

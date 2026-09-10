@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	lineFormat = "%s,%s,%d,%s,%d"
+	lineFormat = "%s,%s,%d,%s,%d\n"
 )
 
 type WinnerWriter interface {
@@ -36,8 +36,16 @@ func (w *winnerWriter) WriteWinners(winners domain.Bets) error {
 	for _, winner := range winners {
 		winnerLine := fmt.Sprintf(lineFormat,
 			winner.FirstName, winner.LastName, winner.Document, winner.Birthdate, winner.Number)
-		if _, err := fmt.Fprintln(w.file, winnerLine); err != nil {
+		n, err := w.file.WriteString(winnerLine)
+		if err != nil {
 			return err
+		}
+		for n < len(winnerLine) {
+			m, err := w.file.WriteString(winnerLine[n:])
+			if err != nil {
+				return err
+			}
+			n += m
 		}
 	}
 	return nil

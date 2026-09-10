@@ -104,7 +104,7 @@ func (d *receiver) ReceiveWinners() (WinnersMessage, error) {
 }
 
 func decodeWinners(data []byte) (domain.Bets, error) {
-	length, err := DecodeUint32(data, 0)
+	length, err := DecodeUint16(data, 0)
 	if err != nil {
 		return nil, err
 	}

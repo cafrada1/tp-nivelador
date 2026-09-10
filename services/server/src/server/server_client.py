@@ -8,7 +8,7 @@ from server.lottery_monitor import LotteryMonitor
 
 class ServerClient(threading.Thread):
     def __init__(self, client_socket: socket.socket, lottery_monitor: LotteryMonitor):
-        super().__init__(daemon=True)
+        super().__init__()
         self._protocol: Protocol = Protocol(client_socket)
         self._lottery_monitor: LotteryMonitor = lottery_monitor
         self._closed: threading.Event = threading.Event()
